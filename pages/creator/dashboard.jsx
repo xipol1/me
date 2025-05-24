@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react'; // Ensure useEffect is imported
+import axios from 'axios';
+import { useAuth } from '../../../context/AuthContext'; // Adjust path as necessary
 import DashboardLayout from '../../../layouts/DashboardLayout';
 import Sidebar from '../../../components/Sidebar';
 import StatCard from '../../../components/StatCard';
@@ -10,15 +12,21 @@ import Button from '../../../components/Button';
 import withAuth from '../../../components/withAuth'; // Import withAuth
 
 const CreatorDashboard = () => {
+  const { user: loggedInUser, token } = useAuth(); // Get loggedInUser (contains role, id) and token
+
+  const [stats, setStats] = useState({
+    totalEarnings: 'N/A',
+    activeAdsInChannels: 'N/A', // Ads currently running in their channels
+    activeChannels: 'N/A',    // Their own active channels
+    pendingRequests: 'N/A'    // Ad requests awaiting their approval
+  });
+  const [pendingAdsData, setPendingAdsData] = useState({ data: [], currentPage: 1, totalPages: 1, totalCount: 0 }); // Added totalCount
+  
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
   // Estado para la navegación del sidebar
   const [activeItem, setActiveItem] = useState('dashboard');
-  
-  // Datos de ejemplo para el usuario
-  const user = {
-    name: 'Ana Martínez',
-    email: 'ana.martinez@ejemplo.com',
-    avatar: null
-  };
   
   // Elementos del sidebar
   const sidebarItems = [
@@ -53,38 +61,7 @@ const CreatorDashboard = () => {
     },
   ];
   
-  // Datos de ejemplo para anuncios pendientes
-  const pendingAds = [
-    {
-      id: '12345',
-      channel: 'Canal Tecnología',
-      advertiser: 'TechCorp',
-      type: 'Post',
-      requestDate: '25/03/2025',
-      price: '$75.00',
-      status: 'Pendiente'
-    },
-    {
-      id: '12346',
-      channel: 'Canal Moda',
-      advertiser: 'FashionBrand',
-      type: 'Historia',
-      requestDate: '24/03/2025',
-      price: '$50.00',
-      status: 'Pendiente'
-    },
-    {
-      id: '12347',
-      channel: 'Canal Viajes',
-      advertiser: 'TravelAgency',
-      type: 'Mención',
-      requestDate: '23/03/2025',
-      price: '$30.00',
-      status: 'Pendiente'
-    }
-  ];
-  
-  // Columnas para la tabla de anuncios pendientes
+  // Columnas para la tabla de anuncios pendientes (can remain as they define structure)
   const pendingAdsColumns = [
     {
       header: 'ID',
@@ -143,7 +120,7 @@ const CreatorDashboard = () => {
           items={sidebarItems}
           activeItem={activeItem}
           onItemClick={setActiveItem}
-          user={user}
+          user={loggedInUser} // Use loggedInUser for sidebar
           onLogout={handleLogout}
         />
       }

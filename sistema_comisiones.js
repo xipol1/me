@@ -680,6 +680,10 @@ class SistemaComisiones {
    * @returns {Promise<Object>} Resultado del retiro
    */
   async procesarRetiroCrypto(detallesRetiro, monto, moneda, retiroId) {
+    if (process.env.CRYPTO_PLATFORM_PRIVATE_KEY && process.env.CRYPTO_PLATFORM_PRIVATE_KEY.trim() !== '') {
+      // The CRITICAL SECURITY WARNING comment should already be below this for context.
+      throw new Error('CRITICAL SECURITY RISK: Direct use of CRYPTO_PLATFORM_PRIVATE_KEY is detected. This method is disabled for security reasons. Please implement a secure key management solution as per the warning comments.');
+    }
     try {
       const {
         address // Dirección de la billetera del creador
