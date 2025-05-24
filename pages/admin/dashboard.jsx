@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import DashboardLayout from '../layouts/DashboardLayout';
-import Sidebar from '../components/Sidebar';
-import StatCard from '../components/StatCard';
-import Table from '../components/Table';
-import Pagination from '../components/Pagination';
-import Badge from '../components/Badge';
-import Button from '../components/Button';
-import FilterBar from '../components/FilterBar';
-import Tabs from '../components/Tabs';
+import DashboardLayout from '../../../layouts/DashboardLayout';
+import Sidebar from '../../../components/Sidebar';
+import StatCard from '../../../components/StatCard';
+import Table from '../../../components/Table';
+import Pagination from '../../../components/Pagination';
+import Badge from '../../../components/Badge';
+import Button from '../../../components/Button';
+import FilterBar from '../../../components/FilterBar';
+import Tabs from '../../../components/Tabs';
+import withAuth from '../../../components/withAuth'; // Import withAuth
 
 const AdminDashboard = () => {
   // Estado para la navegación del sidebar
@@ -481,4 +482,4 @@ const AdminDashboard = () => {
   );
 };
 
-export default AdminDashboard;
+export default withAuth(AdminDashboard, ['admin']); // Wrap with withAuth and specify roles

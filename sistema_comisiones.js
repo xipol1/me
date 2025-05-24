@@ -1,15 +1,29 @@
-const mongoose = require('mongoose');
+// const mongoose = require('mongoose'); // Removed if not directly used elsewhere
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); // Initialize Stripe with secret key
+const paypal = require('@paypal/checkout-server-sdk');
+
+const User = require('../models/User');
+const Channel = require('../models/Channel'); // Assuming Channel model will be used later
+const Transaction = require('../models/Transaction');
+
+// Configure PayPal client
+// Environment: PayPal.core.SandboxEnvironment or PayPal.core.LiveEnvironment
+const paypalEnvironment = process.env.PAYPAL_MODE === 'live'
+  ? new paypal.core.LiveEnvironment(process.env.PAYPAL_CLIENT_ID, process.env.PAYPAL_CLIENT_SECRET)
+  : new paypal.core.SandboxEnvironment(process.env.PAYPAL_CLIENT_ID_SANDBOX || process.env.PAYPAL_CLIENT_ID, process.env.PAYPAL_CLIENT_SECRET_SANDBOX || process.env.PAYPAL_CLIENT_SECRET); // Fallback to non-sandbox if specific sandbox vars not set
+const paypalClient = new paypal.core.PayPalHttpClient(paypalEnvironment);
 
 /**
  * Clase para el sistema de comisiones y billetera para creadores
  */
 class SistemaComisiones {
-  constructor(stripeAPI, paypalAPI, cryptoAPI) {
-    this.stripeAPI = stripeAPI;
-    this.paypalAPI = paypalAPI;
-    this.cryptoAPI = cryptoAPI;
+  constructor(/* stripeAPI, paypalAPI, */ cryptoAPI) { // Stripe and PayPal clients are now configured globally
+    // this.stripeAPI = stripeAPI; // No longer needed as instance var if using global stripe client
+    // this.paypalAPI = paypalAPI; // No longer needed as instance var if using global paypalClient
+    this.cryptoAPI = cryptoAPI; // Assuming cryptoAPI is still passed or configured elsewhere
     this.comisionPorcentaje = 10; // Comisión predeterminada del 10%
     this.comisionMinima = 1; // Comisión mínima en USD
   }
@@ -120,22 +134,34 @@ class SistemaComisiones {
         metodo, // 'stripe', 'paypal', 'crypto'
         monto,
         moneda,
-        tipoCanal,
-        tipoAnuncio,
+        tipoCanal, // This might come from the channel object
+        tipoAnuncio, // This might come from ad object or rate object
         anuncianteId,
         creadorId,
+        adId, // Assuming adId is passed
         detallesPago
       } = pagoData;
+
+      const anunciante = await User.findById(anuncianteId);
+      const creador = await User.findById(creadorId);
+      // const ad = await Ad.findById(adId); // Assuming Ad model exists and is required
+      // const channel = await Channel.findById(ad.channelId); // Assuming ad has channelId
+
+      if (!anunciante || !creador) {
+        throw new Error('Anunciante or Creador not found.');
+      }
+      // if (!ad || !channel) throw new Error('Ad or Channel not found.');
       
-      // Calcular comisión
+      // For now, tipoCanal and tipoAnuncio are passed directly.
+      // In a real scenario, these might be derived from ad/channel objects.
       const comisionInfo = this.calcularComision(monto, moneda, tipoCanal, tipoAnuncio);
       
-      // Generar ID de transacción
-      const transaccionId = uuidv4();
+      const transaccionId = uuidv4(); // Still useful for external reference if needed
       
-      // Procesar pago según el método
       let resultadoPago;
-      
+      // Switch for payment methods (procesarPagoStripe, etc.) remains the same
+      // Ensure these sub-methods now return enough info for the Transaction doc
+      // e.g., { gatewayId: '...', gatewayStatus: '...', processorFee: ... }
       switch (metodo) {
         case 'stripe':
           resultadoPago = await this.procesarPagoStripe(detallesPago, comisionInfo, transaccionId);
@@ -149,36 +175,75 @@ class SistemaComisiones {
         default:
           throw new Error(`Método de pago no soportado: ${metodo}`);
       }
+
+      if (resultadoPago.estado !== 'succeeded' && resultadoPago.estado !== 'completed' && resultadoPago.estado !== 'confirmado' && resultadoPago.status !== 'succeeded' /*Stripe uses status*/) {
+          // Payment failed, create a failed transaction record
+          const failedTx = new Transaction({
+              type: 'ad_purchase',
+              userId: anuncianteId,
+              relatedUser: creadorId,
+              adId: adId,
+              // channelId: channel._id,
+              description: `Failed payment attempt for Ad ${adId || 'N/A'}`,
+              amount: comisionInfo.montoTotal,
+              currency: comisionInfo.moneda,
+              platformFee: 0,
+              processorFee: resultadoPago.processorFee || 0,
+              netAmount: 0, // No money moved to creator
+              status: 'failed',
+              paymentMethod: metodo,
+              paymentGatewayId: resultadoPago.id || transaccionId,
+              gatewayResponse: resultadoPago,
+              metadata: { transaccionIdOriginal: transaccionId }
+          });
+          await failedTx.save();
+          throw new Error(`Payment failed with status: ${resultadoPago.estado || resultadoPago.status}`);
+      }
+
+      // Create successful transaction record
+      const transaccion = new Transaction({
+        type: 'ad_purchase',
+        userId: anuncianteId, // The one paying
+        relatedUser: creadorId, // The one receiving (before fees)
+        adId: adId,
+        // channelId: channel._id, 
+        description: `Payment for Ad ${adId || 'N/A'} via ${metodo}`,
+        amount: comisionInfo.montoTotal,
+        currency: comisionInfo.moneda,
+        platformFee: comisionInfo.comisionMonto,
+        processorFee: resultadoPago.processorFee || 0, // Assume processorFee is returned by payment methods
+        netAmount: comisionInfo.montoNeto,
+        status: 'succeeded',
+        paymentMethod: metodo,
+        paymentGatewayId: resultadoPago.id || transaccionId, // ID from payment gateway
+        gatewayResponse: resultadoPago, // Store some response for auditing
+        metadata: { transaccionIdOriginal: transaccionId }
+      });
+      await transaccion.save();
       
-      // Crear registro de transacción
-      const transaccion = {
-        id: transaccionId,
-        fecha: new Date(),
-        anuncianteId,
-        creadorId,
-        metodo,
-        montoTotal: comisionInfo.montoTotal,
-        moneda: comisionInfo.moneda,
-        comisionPorcentaje: comisionInfo.comisionPorcentaje,
-        comisionMonto: comisionInfo.comisionMonto,
-        montoNeto: comisionInfo.montoNeto,
-        tipoCanal,
-        tipoAnuncio,
-        estado: 'completado',
-        detallesPago: resultadoPago
-      };
-      
-      // Actualizar billetera del creador
-      await this.actualizarBilleteraCreador(creadorId, comisionInfo.montoNeto, moneda);
+      // Update creator's wallet
+      let creatorWallet = creador.wallet.balances.find(b => b.currency === moneda);
+      if (creatorWallet) {
+        creatorWallet.amount += comisionInfo.montoNeto;
+      } else {
+        creador.wallet.balances.push({ currency: moneda, amount: comisionInfo.montoNeto });
+      }
+      // Ensure default currency is set if not present
+      if (!creador.wallet.defaultCurrency) {
+          creador.wallet.defaultCurrency = 'USD'; // Or some other logic
+      }
+      await creador.save();
       
       return {
-        transaccion,
+        transaction: transaccion,
         comisionInfo,
         resultadoPago
       };
     } catch (error) {
-      console.error('Error al procesar pago:', error.message);
-      throw error;
+      console.error('Error al procesar pago:', error.message, error.stack);
+      // throw error; // Re-throwing can be good, but ensure it's handled by caller
+      // For now, let's return an error structure
+      return { error: true, message: error.message, details: error.stack };
     }
   }
 
@@ -191,48 +256,50 @@ class SistemaComisiones {
    */
   async procesarPagoStripe(detallesPago, comisionInfo, transaccionId) {
     try {
-      const {
-        paymentIntentId,
-        customerId,
-        paymentMethodId,
-        description
-      } = detallesPago;
-      
-      // Si ya tenemos un paymentIntentId, capturarlo
-      if (paymentIntentId) {
-        const paymentIntent = await this.stripeAPI.confirmPaymentIntent(paymentIntentId);
-        return {
-          id: paymentIntent.id,
-          estado: paymentIntent.status,
-          metodo: 'stripe'
-        };
-      }
-      
-      // Crear un nuevo intento de pago
-      const paymentIntent = await this.stripeAPI.createPaymentIntent({
-        amount: Math.round(comisionInfo.montoTotal * 100), // Convertir a centavos
+      const { paymentMethodId, customerId, description, return_url } = detallesPago; // return_url for 3DS
+      const amountInCents = Math.round(comisionInfo.montoTotal * 100);
+
+      // Example: Create and confirm a PaymentIntent
+      const paymentIntentParams = {
+        amount: amountInCents,
         currency: comisionInfo.moneda.toLowerCase(),
-        customer: customerId,
         payment_method: paymentMethodId,
+        customer: customerId, // Optional, if you have Stripe Customer objects
         description: description || `Pago por anuncio en ${comisionInfo.tipoCanal}`,
         metadata: {
-          transaccionId,
+          transaccion_plataforma_id: transaccionId,
           tipoCanal: comisionInfo.tipoCanal,
           tipoAnuncio: comisionInfo.tipoAnuncio,
-          comisionPorcentaje: comisionInfo.comisionPorcentaje.toString(),
-          comisionMonto: comisionInfo.comisionMonto.toString()
         },
-        confirm: true
-      });
+        confirm: true, // Attempt to confirm immediately
+        // return_url: return_url || 'your_platform_redirect_url_for_3ds', // Required for SCA
+      };
       
+      // For payments requiring user action (e.g. 3D Secure)
+      if (return_url) {
+          paymentIntentParams.return_url = return_url;
+          // if payment_method is not provided, Stripe might create one or use a saved one.
+          // if payment_method is provided, 'confirm: true' might fail if it needs 3DS.
+          // A more robust flow involves creating, then confirming on client, then handling server-side.
+          // For simplicity here, we assume direct server-side confirmation for non-SCA or if SCA handled by client.
+      }
+
+      const paymentIntent = await stripe.paymentIntents.create(paymentIntentParams);
+      
+      // Simplified fee calculation (Stripe fees are complex and vary)
+      // This is a very rough placeholder for processorFee.
+      const calculatedStripeFee = Math.round(amountInCents * 0.029 + 30) / 100; // e.g., 2.9% + $0.30
+
       return {
         id: paymentIntent.id,
-        estado: paymentIntent.status,
+        status: paymentIntent.status, // e.g., 'succeeded', 'requires_action', 'processing'
+        client_secret: paymentIntent.client_secret, // if requires_action
+        processorFee: calculatedStripeFee, // Placeholder
         metodo: 'stripe'
       };
     } catch (error) {
-      console.error('Error al procesar pago con Stripe:', error.message);
-      throw error;
+      console.error('Error al procesar pago con Stripe:', error.message, error.stack);
+      return { id: transaccionId, status: 'failed', error: error.message, processorFee: 0, metodo: 'stripe' };
     }
   }
 
@@ -245,47 +312,58 @@ class SistemaComisiones {
    */
   async procesarPagoPayPal(detallesPago, comisionInfo, transaccionId) {
     try {
-      const {
-        orderId,
-        returnUrl,
-        cancelUrl
-      } = detallesPago;
-      
-      // Si ya tenemos un orderId, capturarlo
-      if (orderId) {
-        const captureResult = await this.paypalAPI.captureOrder(orderId);
-        return {
-          id: captureResult.id,
-          estado: captureResult.status,
-          metodo: 'paypal'
-        };
+      const { orderIdToCapture, /* or other details like payerId if creating order here */ } = detallesPago;
+      let orderID = orderIdToCapture;
+      let createdOrder = null;
+
+      if (!orderID) {
+          // Create order if no orderID is provided to capture
+          const request = new paypal.orders.OrdersCreateRequest();
+          request.prefer("return=representation");
+          request.requestBody({
+            intent: 'CAPTURE',
+            purchase_units: [{
+              reference_id: transaccionId,
+              description: `Pago por anuncio en ${comisionInfo.tipoCanal}`,
+              custom_id: transaccionId,
+              amount: {
+                currency_code: comisionInfo.moneda.toUpperCase(),
+                value: comisionInfo.montoTotal.toFixed(2)
+              }
+            }],
+            // application_context: { // Optional: for redirect URLs if needed
+            //   return_url: 'your_platform_return_url',
+            //   cancel_url: 'your_platform_cancel_url'
+            // }
+          });
+          createdOrder = await paypalClient.execute(request);
+          orderID = createdOrder.result.id;
       }
       
-      // Crear una nueva orden
-      const order = await this.paypalAPI.createOrder({
-        intent: 'CAPTURE',
-        purchaseUnits: [{
-          referenceId: transaccionId,
-          description: `Pago por anuncio en ${comisionInfo.tipoCanal}`,
-          customId: transaccionId,
-          amount: {
-            currency_code: comisionInfo.moneda,
-            value: comisionInfo.montoTotal.toString()
-          }
-        }],
-        returnUrl: returnUrl,
-        cancelUrl: cancelUrl
-      });
-      
+      if (!orderID) {
+          throw new Error('PayPal Order ID not available for capture.');
+      }
+
+      // Capture the order
+      const captureRequest = new paypal.orders.OrdersCaptureRequest(orderID);
+      captureRequest.requestBody({}); // Can be empty for capture
+      const capture = await paypalClient.execute(captureRequest);
+      const captureData = capture.result;
+
+      // Simplified fee calculation (PayPal fees vary)
+      // This is a very rough placeholder.
+      const calculatedPayPalFee = (comisionInfo.montoTotal * 0.0349 + 0.49).toFixed(2);
+
       return {
-        id: order.id,
-        estado: order.status,
+        id: captureData.id, // This is the capture ID, or use orderID if more relevant
+        status: captureData.status, // e.g., 'COMPLETED', 'PENDING'
+        processorFee: parseFloat(calculatedPayPalFee), // Placeholder
         metodo: 'paypal',
-        approveUrl: order.links.find(link => link.rel === 'approve').href
+        orderData: createdOrder ? createdOrder.result : null // Include created order data if applicable
       };
     } catch (error) {
-      console.error('Error al procesar pago con PayPal:', error.message);
-      throw error;
+      console.error('Error al procesar pago con PayPal:', error.message, error.response ? error.response.data : '', error.stack);
+      return { id: transaccionId, status: 'failed', error: error.message, processorFee: 0, metodo: 'paypal' };
     }
   }
 
@@ -345,18 +423,34 @@ class SistemaComisiones {
    * @param {string} moneda - Moneda del monto
    * @returns {Promise<Object>} Billetera actualizada
    */
-  async actualizarBilleteraCreador(creadorId, monto, moneda) {
+  async actualizarBilleteraCreador(creadorId, monto, moneda, operationType = 'credit') { // operationType 'credit' or 'debit'
     try {
-      // Aquí se implementaría la lógica para actualizar la billetera en la base de datos
-      // Por ahora, simulamos la actualización
-      console.log(`Actualizando billetera del creador ${creadorId}: +${monto} ${moneda}`);
+      const creador = await User.findById(creadorId);
+      if (!creador) {
+        throw new Error('Creator not found for wallet update.');
+      }
       
-      return {
-        creadorId,
-        montoAñadido: monto,
-        moneda,
-        fechaActualizacion: new Date()
-      };
+      let balanceEntry = creador.wallet.balances.find(b => b.currency === moneda);
+      if (balanceEntry) {
+        if (operationType === 'credit') {
+          balanceEntry.amount += monto;
+        } else if (operationType === 'debit') {
+          balanceEntry.amount -= monto;
+          if (balanceEntry.amount < 0) throw new Error('Insufficient funds for debit.');
+        }
+      } else {
+        if (operationType === 'credit') {
+          creador.wallet.balances.push({ currency: moneda, amount: monto });
+        } else { // debit on non-existing currency balance
+          throw new Error(`No balance found for currency ${moneda} to debit.`);
+        }
+      }
+      if (!creador.wallet.defaultCurrency) {
+          creador.wallet.defaultCurrency = 'USD';
+      }
+      await creador.save();
+      console.log(`Billetera del creador ${creadorId} actualizada: ${operationType === 'credit' ? '+' : '-'}${monto} ${moneda}`);
+      return creador.wallet;
     } catch (error) {
       console.error('Error al actualizar billetera del creador:', error.message);
       throw error;
@@ -370,18 +464,16 @@ class SistemaComisiones {
    */
   async obtenerBalanceBilletera(creadorId) {
     try {
-      // Aquí se implementaría la lógica para obtener el balance desde la base de datos
-      // Por ahora, simulamos la obtención
+      const creador = await User.findById(creadorId);
+      if (!creador) {
+        throw new Error('Creator not found for balance inquiry.');
+      }
       console.log(`Obteniendo balance de billetera del creador ${creadorId}`);
-      
       return {
         creadorId,
-        balances: [
-          { moneda: 'USD', monto: 1000 },
-          { moneda: 'EUR', monto: 850 },
-          { moneda: 'ETH', monto: 0.5 }
-        ],
-        fechaActualizacion: new Date()
+        balances: creador.wallet.balances,
+        defaultCurrency: creador.wallet.defaultCurrency,
+        fechaActualizacion: creador.updatedAt // Or a dedicated wallet update timestamp if added
       };
     } catch (error) {
       console.error('Error al obtener balance de billetera:', error.message);
@@ -403,21 +495,22 @@ class SistemaComisiones {
         moneda,
         detallesRetiro
       } = retiroData;
-      
-      // Verificar balance disponible
-      const billetera = await this.obtenerBalanceBilletera(creadorId);
-      const balanceMoneda = billetera.balances.find(b => b.moneda === moneda);
-      
-      if (!balanceMoneda || balanceMoneda.monto < monto) {
-        throw new Error(`Balance insuficiente para el retiro: ${balanceMoneda?.monto || 0} ${moneda}`);
+
+      const creador = await User.findById(creadorId);
+      if (!creador) {
+        throw new Error('Creator not found for withdrawal request.');
+      }
+
+      const balanceMoneda = creador.wallet.balances.find(b => b.moneda === moneda);
+      if (!balanceMoneda || balanceMoneda.amount < monto) {
+        throw new Error(`Balance insuficiente para el retiro: ${balanceMoneda ? balanceMoneda.amount : 0} ${moneda}`);
       }
       
-      // Generar ID de retiro
-      const retiroId = uuidv4();
-      
-      // Procesar retiro según el método
+      const retiroId = uuidv4(); // For external reference / metadata
       let resultadoRetiro;
       
+      // Switch for procesarRetiroStripe, etc. remains same
+      // Ensure these sub-methods return enough info for the Transaction doc
       switch (metodo) {
         case 'stripe':
           resultadoRetiro = await this.procesarRetiroStripe(detallesRetiro, monto, moneda, retiroId);
@@ -434,29 +527,58 @@ class SistemaComisiones {
         default:
           throw new Error(`Método de retiro no soportado: ${metodo}`);
       }
+
+      if (resultadoRetiro.estado !== 'succeeded' && resultadoRetiro.estado !== 'completed' && resultadoRetiro.estado !== 'confirmado' && resultadoRetiro.status !== 'succeeded' && resultadoRetiro.estado !== 'procesando' /* banco can be procesando */) {
+          // Withdrawal processing failed with payment gateway
+          const failedTx = new Transaction({
+              type: 'withdrawal',
+              userId: creadorId,
+              description: `Failed withdrawal attempt via ${metodo}`,
+              amount: monto,
+              currency: moneda,
+              platformFee: 0, // Fees might apply on withdrawals, add if needed
+              processorFee: resultadoRetiro.processorFee || 0,
+              netAmount: monto, // Net amount requested by user
+              status: 'failed',
+              paymentMethod: metodo,
+              paymentGatewayId: resultadoRetiro.id || retiroId,
+              gatewayResponse: resultadoRetiro,
+              metadata: { retiroIdOriginal: retiroId }
+          });
+          await failedTx.save();
+          throw new Error(`Withdrawal processing failed with status: ${resultadoRetiro.estado || resultadoRetiro.status}`);
+      }
+
+      // Create transaction record for withdrawal
+      const transaccionRetiro = new Transaction({
+        type: 'withdrawal',
+        userId: creadorId,
+        description: `Withdrawal via ${metodo}`,
+        amount: monto, // The amount requested by user
+        currency: moneda,
+        platformFee: 0, // Assuming no platform fee on withdrawal for now
+        processorFee: resultadoRetiro.processorFee || 0, // Fee charged by payment processor
+        netAmount: monto, // The amount the user should receive (or monto - processorFee if user bears it)
+        status: resultadoRetiro.estado === 'procesando' ? 'processing' : 'succeeded', // some transfers are not instant
+        paymentMethod: metodo,
+        paymentGatewayId: resultadoRetiro.id || retiroId,
+        gatewayResponse: resultadoRetiro,
+        metadata: { retiroIdOriginal: retiroId }
+      });
+      await transaccionRetiro.save();
       
-      // Actualizar billetera del creador (restar el monto retirado)
-      await this.actualizarBilleteraCreador(creadorId, -monto, moneda);
-      
-      // Crear registro de retiro
-      const retiro = {
-        id: retiroId,
-        fecha: new Date(),
-        creadorId,
-        metodo,
-        monto,
-        moneda,
-        estado: 'procesando',
-        detallesRetiro: resultadoRetiro
-      };
+      // Update creator's wallet (debit)
+      balanceMoneda.amount -= monto;
+      await creador.save();
       
       return {
-        retiro,
+        transaction: transaccionRetiro,
         resultadoRetiro
       };
     } catch (error) {
-      console.error('Error al solicitar retiro:', error.message);
-      throw error;
+      console.error('Error al solicitar retiro:', error.message, error.stack);
+      // throw error;
+      return { error: true, message: error.message, details: error.stack };
     }
   }
 
@@ -470,29 +592,32 @@ class SistemaComisiones {
    */
   async procesarRetiroStripe(detallesRetiro, monto, moneda, retiroId) {
     try {
-      const {
-        accountId // ID de la cuenta conectada en Stripe
-      } = detallesRetiro;
-      
-      // Crear transferencia a la cuenta conectada
-      const transfer = await this.stripeAPI.createTransfer({
-        amount: Math.round(monto * 100), // Convertir a centavos
+      const { accountId } = detallesRetiro; // Stripe Connect account ID of the creator
+      if (!accountId) throw new Error('Stripe account ID is required for withdrawal.');
+
+      const amountInCents = Math.round(monto * 100);
+
+      // Create a Transfer to the Connect account
+      const transfer = await stripe.transfers.create({
+        amount: amountInCents,
         currency: moneda.toLowerCase(),
-        destinationAccountId: accountId,
-        description: `Retiro de fondos - ID: ${retiroId}`,
-        metadata: {
-          retiroId
-        }
+        destination: accountId,
+        description: `Retiro de fondos - Plataforma ID: ${retiroId}`,
+        metadata: { retiro_plataforma_id: retiroId }
       });
       
+      // Placeholder for fees. Stripe Transfer fees are usually on the platform.
+      const processorFee = 0; // Or calculate if applicable
+
       return {
         id: transfer.id,
-        estado: transfer.status,
+        status: transfer.status || 'succeeded', // Stripe transfer status, 'succeeded' is a guess for direct transfers
+        processorFee: processorFee,
         metodo: 'stripe'
       };
     } catch (error) {
-      console.error('Error al procesar retiro con Stripe:', error.message);
-      throw error;
+      console.error('Error al procesar retiro con Stripe:', error.message, error.stack);
+      return { id: retiroId, status: 'failed', error: error.message, processorFee: 0, metodo: 'stripe' };
     }
   }
 
@@ -506,35 +631,43 @@ class SistemaComisiones {
    */
   async procesarRetiroPayPal(detallesRetiro, monto, moneda, retiroId) {
     try {
-      const {
-        email // Email de PayPal del creador
-      } = detallesRetiro;
-      
-      // Crear pago
-      const payout = await this.paypalAPI.createPayout({
-        batchId: `RETIRO_${retiroId}`,
-        emailSubject: 'Retiro de fondos de la plataforma de monetización',
-        emailMessage: 'Has recibido un retiro de fondos de tu billetera en la plataforma',
+      const { email } = detallesRetiro; // PayPal email of the creator
+      if (!email) throw new Error('PayPal email is required for withdrawal.');
+
+      const request = new paypal.payouts.PayoutsPostRequest();
+      request.requestBody({
+        sender_batch_header: {
+          sender_batch_id: `Payout_${retiroId}_${Date.now()}`,
+          email_subject: 'Has recibido un pago de [TuPlataforma]',
+          email_message: `Has recibido un pago de ${monto} ${moneda} de [TuPlataforma]. ID de Retiro: ${retiroId}`
+        },
         items: [{
-          recipientType: 'EMAIL',
+          recipient_type: 'EMAIL',
           amount: {
-            value: monto.toString(),
-            currency: moneda
+            value: monto.toFixed(2),
+            currency: moneda.toUpperCase()
           },
           note: `Retiro de fondos - ID: ${retiroId}`,
-          senderItemId: retiroId,
+          sender_item_id: `item_${retiroId}_${Date.now()}`,
           receiver: email
         }]
       });
-      
+
+      const response = await paypalClient.execute(request);
+      const batchHeader = response.result.batch_header;
+
+      // Placeholder for fees. PayPal Payout fees vary.
+      const processorFee = (monto * 0.02).toFixed(2); // Example 2% fee
+
       return {
-        id: payout.batch_header.payout_batch_id,
-        estado: payout.batch_header.batch_status,
+        id: batchHeader.payout_batch_id,
+        status: batchHeader.batch_status, // e.g., PENDING, SUCCESS, UNCLAIMED
+        processorFee: parseFloat(processorFee),
         metodo: 'paypal'
       };
     } catch (error) {
-      console.error('Error al procesar retiro con PayPal:', error.message);
-      throw error;
+      console.error('Error al procesar retiro con PayPal:', error.message, error.response ? error.response.data : '', error.stack);
+      return { id: retiroId, status: 'failed', error: error.message, processorFee: 0, metodo: 'paypal' };
     }
   }
 

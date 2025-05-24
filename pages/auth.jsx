@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import MainLayout from '../layouts/MainLayout';
-import Input from '../components/Input';
-import Button from '../components/Button';
-import Tabs from '../components/Tabs';
+import axios from 'axios';
+import { useRouter } from 'next/router'; // Added useRouter
+import { useAuth } from '../context/AuthContext'; // Added useAuth
+import MainLayout from '../../layouts/MainLayout';
+import Input from '../../components/Input';
+import Button from '../../components/Button';
+import Tabs from '../../components/Tabs';
 
 const AuthPage = () => {
   const [activeTab, setActiveTab] = useState('login');
@@ -13,6 +16,10 @@ const AuthPage = () => {
     confirmPassword: '',
     userType: 'creator' // creator o advertiser
   });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { login: authLogin } = useAuth(); // Get login function from AuthContext
+  const router = useRouter(); // Initialize router
   
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -22,16 +29,60 @@ const AuthPage = () => {
     }));
   };
   
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    // Lógica de inicio de sesión
-    console.log('Login with:', formData.email, formData.password);
+    setError(''); // Clear previous errors
+    setLoading(true);
+    try {
+      const response = await axios.post('/api/auth/login', {
+        email: formData.email,
+        password: formData.password,
+      });
+      // Login successful, use authLogin from context
+      authLogin(response.data.user, response.data.token);
+      // Redirect based on role
+      if (response.data.user.role === 'admin') {
+        router.push('/admin/dashboard');
+      } else if (response.data.user.role === 'creator') {
+        router.push('/creator/dashboard');
+      } else if (response.data.user.role === 'advertiser') {
+        router.push('/advertiser/dashboard');
+      } else {
+        router.push('/'); // Fallback
+      }
+    } catch (err) {
+      console.error('Login error:', err.response ? err.response.data : err.message);
+      setError(err.response && err.response.data && err.response.data.message ? err.response.data.message : 'Login failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
   
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
-    // Lógica de registro
-    console.log('Register:', formData);
+    if (formData.password !== formData.confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setError('');
+    setLoading(true);
+    try {
+      const response = await axios.post('/api/auth/register', {
+        name: formData.name,
+        email: formData.email,
+        password: formData.password,
+        role: formData.userType, // 'creator' or 'advertiser'
+      });
+      console.log('Registration successful:', response.data);
+      // TODO: Optionally log the user in directly or redirect to login
+      alert('Registration successful! Please login.'); // Placeholder
+      setActiveTab('login'); // Switch to login tab after successful registration
+    } catch (err) {
+      console.error('Registration error:', err.response ? err.response.data : err.message);
+      setError(err.response && err.response.data && err.response.data.message ? err.response.data.message : 'Registration failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
   
   const tabs = [
@@ -79,6 +130,8 @@ const AuthPage = () => {
               onTabChange={setActiveTab} 
               className="mb-6"
             />
+
+            {error && <p className="text-red-500 text-sm text-center mb-4">{error}</p>}
             
             {activeTab === 'login' ? (
               <form className="space-y-6" onSubmit={handleLogin}>
@@ -121,8 +174,8 @@ const AuthPage = () => {
                 </div>
                 
                 <div>
-                  <Button type="submit" className="w-full">
-                    Iniciar sesión
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? 'Processing...' : 'Iniciar sesión'}
                   </Button>
                 </div>
               </form>
@@ -201,8 +254,8 @@ const AuthPage = () => {
                 </div>
                 
                 <div>
-                  <Button type="submit" className="w-full">
-                    Registrarse
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? 'Processing...' : 'Registrarse'}
                   </Button>
                 </div>
               </form>

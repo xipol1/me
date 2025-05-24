@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
-import MainLayout from '../layouts/MainLayout';
-import Button from '../components/Button';
+import Link from 'next/link';
+import { useAuth } from '../../context/AuthContext'; // Added useAuth
+import MainLayout from '../../layouts/MainLayout';
+import Button from '../../components/Button';
 
 const LandingPage = () => {
+  const { isAuthenticated, user, logout } = useAuth(); // Get auth state
+
   return (
     <MainLayout>
       {/* Hero Section */}
@@ -17,8 +21,23 @@ const LandingPage = () => {
                 Conecta con anunciantes y genera ingresos con tu audiencia en Telegram, WhatsApp, Instagram, Facebook y Discord.
               </p>
               <div className="mt-10 flex space-x-4">
-                <Button size="lg">Registrarse como Creador</Button>
-                <Button size="lg" variant="outline" className="bg-white">Soy Anunciante</Button>
+                {isAuthenticated ? (
+                  <>
+                    <Link href={user?.role === 'admin' ? '/admin/dashboard' : user?.role === 'creator' ? '/creator/dashboard' : '/advertiser/dashboard'} legacyBehavior>
+                      <a className="inline-block"><Button size="lg">Go to Dashboard</Button></a>
+                    </Link>
+                    <Button size="lg" variant="outline" className="bg-white" onClick={logout}>Logout</Button>
+                  </>
+                ) : (
+                  <>
+                    <Link href="/auth?role=creator" legacyBehavior>
+                      <a className="inline-block"><Button size="lg">Registrarse como Creador</Button></a>
+                    </Link>
+                    <Link href="/auth?role=advertiser" legacyBehavior>
+                      <a className="inline-block"><Button size="lg" variant="outline" className="bg-white">Soy Anunciante</Button></a>
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
             <div className="mt-12 lg:mt-0 lg:col-span-6">
@@ -257,9 +276,13 @@ const LandingPage = () => {
             Únete a miles de creadores que ya están generando ingresos con sus audiencias
           </p>
           <div className="mt-8">
-            <Button size="lg" variant="accent" className="px-8">
-              Comenzar ahora
-            </Button>
+            <Link href="/auth" legacyBehavior>
+              <a className="inline-block">
+                <Button size="lg" variant="accent" className="px-8">
+                  Comenzar ahora
+                </Button>
+              </a>
+            </Link>
           </div>
         </div>
       </section>

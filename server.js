@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
+const passport = require('passport'); // Added passport
+const authMiddleware = require('./middleware/authMiddleware'); // Added authMiddleware
 
 // Cargar variables de entorno
 dotenv.config();
@@ -12,8 +14,11 @@ const config = require('./config/config');
 
 // Importar rutas
 const authRoutes = require('./routes/authRoutes');
-const canalRoutes = require('./routes/canalRoutes');
-const anuncioRoutes = require('./routes/anuncioRoutes');
+const userRoutes = require('./routes/userRoutes'); // Added userRoutes
+// const canalRoutes = require('./routes/canalRoutes'); // This was a placeholder from server.js initial content
+// const anuncioRoutes = require('./routes/anuncioRoutes'); // This was a placeholder
+const channelRoutes = require('./routes/channelRoutes'); // New
+const adRoutes = require('./routes/adRoutes');           // New
 const transaccionRoutes = require('./routes/transaccionRoutes');
 const estadisticaRoutes = require('./routes/estadisticaRoutes');
 
@@ -26,6 +31,10 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 app.use(morgan('dev'));
 
+// Initialize Passport
+app.use(authMiddleware.initializePassport); // Correctly use the exported initializePassport
+// Or app.use(passport.initialize()); if you prefer to initialize directly after requiring passport
+
 // Conectar a la base de datos
 mongoose.connect(config.MONGODB_URI, {
   useNewUrlParser: true,
@@ -36,8 +45,11 @@ mongoose.connect(config.MONGODB_URI, {
 
 // Rutas
 app.use('/api/auth', authRoutes);
-app.use('/api/canales', canalRoutes);
-app.use('/api/anuncios', anuncioRoutes);
+app.use('/api/users', userRoutes); // Added userRoutes
+// app.use('/api/canales', canalRoutes); // Replace this
+// app.use('/api/anuncios', anuncioRoutes); // Replace this
+app.use('/api/channels', channelRoutes); // Use new one
+app.use('/api/ads', adRoutes);           // Use new one
 app.use('/api/transacciones', transaccionRoutes);
 app.use('/api/estadisticas', estadisticaRoutes);
 
