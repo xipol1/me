@@ -7,6 +7,37 @@ db.createCollection('ads');
 db.createCollection('transactions');
 db.createCollection('statistics');
 
+// Indexes for 'users'
+db.users.createIndex({ email: 1 }, { unique: true });
+db.users.createIndex({ role: 1 });
+
+// Indexes for 'channels'
+db.channels.createIndex({ userId: 1 });
+db.channels.createIndex({ platform: 1 });
+db.channels.createIndex({ category: 1 });
+db.channels.createIndex({ handle: 1, platform: 1 }, { unique: true, sparse: true }); // Unique per platform, sparse for conditional uniqueness
+
+// Indexes for 'ads'
+db.ads.createIndex({ advertiserId: 1 });
+db.ads.createIndex({ channelId: 1 });
+db.ads.createIndex({ status: 1 });
+db.ads.createIndex({ type: 1 });
+
+// Indexes for 'transactions'
+db.transactions.createIndex({ advertiserId: 1 });
+db.transactions.createIndex({ creatorId: 1 });
+db.transactions.createIndex({ adId: 1 });
+db.transactions.createIndex({ status: 1 });
+db.transactions.createIndex({ paymentMethod: 1 });
+
+// Indexes for 'statistics'
+db.statistics.createIndex({ channelId: 1 });
+db.statistics.createIndex({ date: 1 });
+
+// Indexes for 'rates'
+// Note: db.createCollection('rates') is created later in the script.
+// We'll add indexes after its creation.
+
 // Crear usuario administrador
 db.users.insertOne({
   email: 'admin@plataforma.com',
@@ -118,6 +149,10 @@ const canal3Id = db.channels.findOne({name: 'Viajes y Aventuras'})._id;
 const canal4Id = db.channels.findOne({name: 'Comunidad Gamer'})._id;
 
 db.createCollection('rates');
+
+// Indexes for 'rates'
+db.rates.createIndex({ channelId: 1 });
+db.rates.createIndex({ type: 1 });
 
 db.rates.insertOne({
   channelId: canal1Id,

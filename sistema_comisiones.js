@@ -552,6 +552,25 @@ class SistemaComisiones {
         address // Dirección de la billetera del creador
       } = detallesRetiro;
       
+    // CRITICAL SECURITY WARNING:
+    // The direct use of `process.env.CRYPTO_PLATFORM_PRIVATE_KEY` below is EXTREMELY DANGEROUS
+    // and makes the platform's crypto funds highly vulnerable to theft if this environment
+    // variable is compromised or exposed.
+    //
+    // DO NOT USE THIS IN PRODUCTION.
+    //
+    // Recommended Solutions:
+    // 1. Use a dedicated secrets management service (e.g., HashiCorp Vault, AWS Secrets Manager,
+    //    Google Secret Manager) to store the private key securely.
+    // 2. Implement a separate, hardened microservice or module that has exclusive,
+    //    controlled access to the private key (e.g., through a vault) and only exposes
+    //    signing functionality to this application. This application should then request
+    //    signing operations from that isolated service.
+    // 3. Utilize a custodial wallet solution or a smart contract-based treasury that
+    //    abstracts direct private key handling away from this application.
+    //
+    // This current implementation is a placeholder and poses a severe security risk.
+    // It should be redesigned before any real funds are handled.
       // Obtener la cuenta de la plataforma para enviar los fondos
       const platformAccount = {
         address: process.env.CRYPTO_PLATFORM_ADDRESS,
