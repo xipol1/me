@@ -174,6 +174,51 @@ module.exports = {
   approveAd,
   rejectAd,
   requestAdModification,
-  deleteAd
+  deleteAd,
   // Other ad specific services: scheduleAd, markAsPublished, recordPerformance, etc.
+  getAdsForCreatorChannels // Added new function
+};
+
+// Add this function to adService.js
+const getAdsForCreatorChannels = async (creatorId, queryParams = {}) => {
+  try {
+    // 1. Find all channels owned by the creator
+    const creatorChannels = await Channel.find({ userId: creatorId }).select('_id');
+    if (!creatorChannels.length) {
+      return { ads: [], currentPage: 1, totalPages: 0, totalCount: 0 }; // No channels, so no ads
+    }
+    const channelIds = creatorChannels.map(c => c._id);
+
+    // 2. Build filter for ads
+    const filter = { channelId: { $in: channelIds } };
+    if (queryParams.status) {
+      // Allow multiple statuses, e.g., status=pending_approval,requires_modification
+      const statuses = queryParams.status.split(',');
+      filter.status = { $in: statuses };
+    }
+    // Add other relevant filters from queryParams if needed
+
+    // Basic pagination
+    const page = parseInt(queryParams.page, 10) || 1;
+    const limit = parseInt(queryParams.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+
+    const ads = await Ad.find(filter)
+      .populate('advertiserId', 'name email')
+      .populate('channelId', 'name platform') // Already have channelId, but good to populate details
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+      
+    const totalAds = await Ad.countDocuments(filter);
+
+    return {
+      ads,
+      currentPage: page,
+      totalPages: Math.ceil(totalAds / limit),
+      totalCount: totalAds
+    };
+  } catch (error) {
+    throw error;
+  }
 };

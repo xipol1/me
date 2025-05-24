@@ -39,7 +39,41 @@ const updateUserProfile = async (userId, updateData) => {
 // - verifyEmail
 // - etc.
 
+// Add this function to userService.js
+const getAllUsers = async (queryParams = {}) => {
+  try {
+    // Basic pagination
+    const page = parseInt(queryParams.page, 10) || 1;
+    const limit = parseInt(queryParams.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+
+    // Basic filtering (can be expanded)
+    const filter = {};
+    if (queryParams.role) filter.role = queryParams.role;
+    if (queryParams.status) filter.status = queryParams.status;
+    // Add search for name/email if needed
+
+    const users = await User.find(filter)
+      .select('-password') // Exclude passwords
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+      
+    const totalUsers = await User.countDocuments(filter);
+
+    return {
+        users,
+        currentPage: page,
+        totalPages: Math.ceil(totalUsers / limit),
+        totalCount: totalUsers
+    };
+  } catch (error) {
+    throw error;
+  }
+};
+
 module.exports = {
   getUserProfile,
-  updateUserProfile
+  updateUserProfile,
+  getAllUsers // Make sure to add it to existing exports.
 };

@@ -19,8 +19,10 @@ const userRoutes = require('./routes/userRoutes'); // Added userRoutes
 // const anuncioRoutes = require('./routes/anuncioRoutes'); // This was a placeholder
 const channelRoutes = require('./routes/channelRoutes'); // New
 const adRoutes = require('./routes/adRoutes');           // New
-const transaccionRoutes = require('./routes/transaccionRoutes');
-const estadisticaRoutes = require('./routes/estadisticaRoutes');
+// const transaccionRoutes = require('./routes/transaccionRoutes'); // Replaced
+// const estadisticaRoutes = require('./routes/estadisticaRoutes'); // Replaced
+const transactionRoutes = require('./routes/transactionRoutes'); // New
+const statisticsRoutes = require('./routes/statisticsRoutes');   // New
 
 // Inicializar app
 const app = express();
@@ -50,8 +52,10 @@ app.use('/api/users', userRoutes); // Added userRoutes
 // app.use('/api/anuncios', anuncioRoutes); // Replace this
 app.use('/api/channels', channelRoutes); // Use new one
 app.use('/api/ads', adRoutes);           // Use new one
-app.use('/api/transacciones', transaccionRoutes);
-app.use('/api/estadisticas', estadisticaRoutes);
+// app.use('/api/transacciones', transaccionRoutes); // Replace
+// app.use('/api/estadisticas', estadisticaRoutes); // Replace
+app.use('/api/transactions', transactionRoutes);   // New
+app.use('/api/statistics', statisticsRoutes);     // New
 
 // Ruta de prueba
 app.get('/', (req, res) => {

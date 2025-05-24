@@ -140,5 +140,22 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Add this route to adRoutes.js
+// @route   GET /api/ads/creator/my-ads
+// @desc    Get ads for the channels owned by the authenticated creator
+// @access  Private (Creator or Admin)
+router.get('/creator/my-ads', authenticateToken, authorizeRoles('creator', 'admin'), async (req, res) => {
+  try {
+    let creatorIdToFetch = req.user.id;
+    if (req.user.role === 'admin' && req.query.creatorId) {
+        creatorIdToFetch = req.query.creatorId; // Admin can specify a creator
+    }
+
+    const result = await adService.getAdsForCreatorChannels(creatorIdToFetch, req.query);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 module.exports = router;

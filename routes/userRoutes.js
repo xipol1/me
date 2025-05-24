@@ -35,5 +35,16 @@ router.put('/me', authenticateToken, async (req, res) => {
 // router.put('/:id', authenticateToken, authorizeRoles('admin'), async (req, res) => { ... });
 // router.delete('/:id', authenticateToken, authorizeRoles('admin'), async (req, res) => { ... });
 
+// @route   GET /api/users
+// @desc    Get all users (Admin only)
+// @access  Private (Admin)
+router.get('/', authenticateToken, authorizeRoles('admin'), async (req, res) => {
+  try {
+    const result = await userService.getAllUsers(req.query);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 module.exports = router;
